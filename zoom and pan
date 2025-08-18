@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>交互式地图</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#165DFF',
+                        secondary: '#36CFC9',
+                        dark: '#1D2129',
+                        light: '#F2F3F5'
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .map-container {
+                @apply relative overflow-hidden bg-light rounded-lg shadow-lg;
+            }
+            .map-control {
+                @apply absolute z-10 bg-white rounded-lg shadow-md p-2 flex flex-col gap-1 transition-all duration-300;
+            }
+            .map-button {
+                @apply w-10 h-10 flex items-center justify-center rounded-md text-dark hover:bg-primary hover:text-white transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary/50;
+            }
+            .scale-indicator {
+                @apply absolute bottom-4 right-4 bg-white/80 backdrop-blur-sm px-3 py-1.5 rounded-full text-sm font-medium text-dark shadow-md;
+            }
+            .dragging {
+                @apply cursor-grabbing;
+            }
+        }
+    </style>
+</head>
+<body class="m-0 p-0 bg-gray-50">
+    <div class="w-full h-screen flex items-center justify-center p-4">
+        <!-- 地图容器 -->
+        <div id="mapContainer" class="map-container w-full h-full max-w-6xl">
+            <!-- 地图图像 -->
+            <div id="map" class="w-full h-full transition-transform duration-150 ease-out origin-center">
+                <img src="https://picsum.photos/id/101/2000/1500" alt="世界地图" class="w-full h-full object-contain">
+            </div>
+            
+            <!-- 缩放控制按钮 -->
+            <div class="map-control top-4 right-4">
+                <button id="zoomIn" class="map-button" aria-label="放大">
+                    <i class="fa fa-plus"></i>
+                </button>
+                <div class="w-full h-px bg-gray-200"></div>
+                <button id="zoomOut" class="map-button" aria-label="缩小">
+                    <i class="fa fa-minus"></i>
+                </button>
+                <div class="w-full h-px bg-gray-200"></div>
+                <button id="resetMap" class="map-button" aria-label="重置地图">
+                    <i class="fa fa-refresh"></i>
+                </button>
+            </div>
+            
+            <!-- 缩放级别指示器 -->
+            <div id="scaleIndicator" class="scale-indicator">
+                缩放级别: <span id="zoomLevel">100%</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // 获取DOM元素
+            const mapContainer = document.getElementById('mapContainer');
+            const map = document.getElementById('map');
+            const zoomInBtn = document.getElementById('zoomIn');
+            const zoomOutBtn = document.getElementById('zoomOut');
+            const resetBtn = document.getElementById('resetMap');
+            const zoomLevelDisplay = document.getElementById('zoomLevel');
+            
+            // 地图状态变量
+            let scale = 1;
+            let x = 0;
+            let y = 0;
+            let isDragging = false;
+            let startX, startY;
+            let initialX, initialY;
+            
+            // 缩放配置
+            const minScale = 0.5;
+            const maxScale = 3;
+            const scaleStep = 0.2;
+            
+            // 更新地图变换
+            function updateMapTransform() {
+                map.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+                zoomLevelDisplay.textContent = `${Math.round(scale * 100)}%`;
+                
+                // 更新按钮状态
+                zoomInBtn.disabled = scale >= maxScale;
+                zoomOutBtn.disabled = scale <= minScale;
+                
+                if (scale >= maxScale) {
+                    zoomInBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                    zoomInBtn.classList.remove('hover:bg-primary', 'hover:text-white');
+                } else {
+                    zoomInBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                    zoomInBtn.classList.add('hover:bg-primary', 'hover:text-white');
+                }
+                
+                if (scale <= minScale) {
+                    zoomOutBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                    zoomOutBtn.classList.remove('hover:bg-primary', 'hover:text-white');
+                } else {
+                    zoomOutBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                    zoomOutBtn.classList.add('hover:bg-primary', 'hover:text-white');
+                }
+            }
+            
+            // 放大功能
+            function zoomIn(clientX, clientY) {
+                if (scale < maxScale) {
+                    const rect = mapContainer.getBoundingClientRect();
+                    const centerX = rect.width / 2;
+                    const centerY = rect.height / 2;
+                    
+                    const mouseX = clientX !== undefined ? clientX - rect.left : centerX;
+                    const mouseY = clientY !== undefined ? clientY - rect.top : centerY;
+                    
+                    const deltaX = mouseX - x;
+                    const deltaY = mouseY - y;
+                    
+                    scale += scaleStep;
+                    
+                    x = mouseX - deltaX * (scale / (scale - scaleStep));
+                    y = mouseY - deltaY * (scale / (scale - scaleStep));
+                    
+                    updateMapTransform();
+                }
+            }
+            
+            // 缩小功能
+            function zoomOut(clientX, clientY) {
+                if (scale > minScale) {
+                    const rect = mapContainer.getBoundingClientRect();
+                    const centerX = rect.width / 2;
+                    const centerY = rect.height / 2;
+                    
+                    const mouseX = clientX !== undefined ? clientX - rect.left : centerX;
+                    const mouseY = clientY !== undefined ? clientY - rect.top : centerY;
+                    
+                    const deltaX = mouseX - x;
+                    const deltaY = mouseY - y;
+                    
+                    scale -= scaleStep;
+                    
+                    x = mouseX - deltaX * (scale / (scale + scaleStep));
+                    y = mouseY - deltaY * (scale / (scale + scaleStep));
+                    
+                    updateMapTransform();
+                }
+            }
+            
+            // 重置地图
+            function resetMap() {
+                scale = 1;
+                x = 0;
+                y = 0;
+                updateMapTransform();
+            }
+            
+            // 鼠标按下事件 - 开始拖拽
+            mapContainer.addEventListener('mousedown', (e) => {
+                if (e.button !== 0) return;
+                
+                isDragging = true;
+                mapContainer.classList.add('dragging');
+                
+                startX = e.clientX;
+                startY = e.clientY;
+                initialX = x;
+                initialY = y;
+                
+                mapContainer.style.cursor = 'grabbing';
+            });
+            
+            // 鼠标移动事件 - 处理拖拽
+            document.addEventListener('mousemove', (e) => {
+                if (!isDragging) return;
+                
+                const deltaX = e.clientX - startX;
+                const deltaY = e.clientY - startY;
+                
+                x = initialX + deltaX;
+                y = initialY + deltaY;
+                
+                updateMapTransform();
+            });
+            
+            // 鼠标释放事件 - 结束拖拽
+            document.addEventListener('mouseup', () => {
+                if (isDragging) {
+                    isDragging = false;
+                    mapContainer.classList.remove('dragging');
+                    mapContainer.style.cursor = 'grab';
+                }
+            });
+            
+            // 鼠标离开容器事件 - 结束拖拽
+            mapContainer.addEventListener('mouseleave', () => {
+                if (isDragging) {
+                    isDragging = false;
+                    mapContainer.classList.remove('dragging');
+                    mapContainer.style.cursor = 'grab';
+                }
+            });
+            
+            // 按钮控制事件
+            zoomInBtn.addEventListener('click', () => zoomIn());
+            zoomOutBtn.addEventListener('click', () => zoomOut());
+            resetBtn.addEventListener('click', resetMap);
+            
+            // 鼠标滚轮缩放
+            mapContainer.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                if (e.deltaY < 0) {
+                    zoomIn(e.clientX, e.clientY);
+                } else {
+                    zoomOut(e.clientX, e.clientY);
+                }
+            }, { passive: false });
+            
+            // 双击放大
+            mapContainer.addEventListener('dblclick', (e) => {
+                e.preventDefault();
+                zoomIn(e.clientX, e.clientY);
+            });
+            
+            // 初始化地图
+            mapContainer.style.cursor = 'grab';
+            updateMapTransform();
+        });
+    </script>
+</body>
+</html>
