@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>地图搜索定位功能</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#165DFF',
+                        secondary: '#36CFC9',
+                        dark: '#1D2129',
+                        light: '#F2F3F5'
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .map-container {
+                @apply relative overflow-hidden bg-light rounded-lg shadow-lg;
+            }
+            .map-control {
+                @apply absolute z-10 bg-white rounded-lg shadow-md p-2 flex flex-col gap-1 transition-all duration-300;
+            }
+            .map-button {
+                @apply w-10 h-10 flex items-center justify-center rounded-md text-dark hover:bg-primary hover:text-white transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary/50;
+            }
+            .scale-indicator {
+                @apply absolute bottom-4 right-4 bg-white/80 backdrop-blur-sm px-3 py-1.5 rounded-full text-sm font-medium text-dark shadow-md;
+            }
+            .dragging {
+                @apply cursor-grabbing;
+            }
+            .search-container {
+                @apply absolute top-4 left-4 right-4 md:left-auto md:w-80 z-10 bg-white rounded-lg shadow-md overflow-hidden transition-all duration-300;
+            }
+            .search-input {
+                @apply w-full px-4 py-3 pl-10 text-gray-700 bg-transparent border-none focus:outline-none focus:ring-0;
+            }
+            .search-results {
+                @apply max-h-60 overflow-y-auto divide-y divide-gray-100 hidden;
+            }
+            .search-result-item {
+                @apply px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors duration-150;
+            }
+            .location-marker {
+                @apply absolute w-6 h-6 -ml-3 -mt-6 z-20 transform transition-all duration-300 scale-0;
+            }
+            .location-marker.visible {
+                @apply scale-100;
+            }
+        }
+    </style>
+</head>
+<body class="m-0 p-0 bg-gray-50">
+    <div class="w-full h-screen flex items-center justify-center p-4">
+        <!-- 地图容器 -->
+        <div id="mapContainer" class="map-container w-full h-full max-w-6xl">
+            <!-- 地图图像 -->
+            <div id="map" class="w-full h-full transition-transform duration-150 ease-out origin-center">
+                <img src="https://picsum.photos/id/101/2000/1500" alt="世界地图" class="w-full h-full object-contain">
+            </div>
+            
+            <!-- 搜索容器 -->
+            <div class="search-container">
+                <div class="relative">
+                    <i class="fa fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
+                    <input 
+                        type="text" 
+                        id="searchInput" 
+                        class="search-input" 
+                        placeholder="搜索地点..." 
+                        autocomplete="off"
+                    >
+                </div>
+                <div id="searchResults" class="search-results"></div>
+            </div>
+            
+            <!-- 缩放控制按钮 -->
+            <div class="map-control top-20 right-4">
+                <button id="zoomIn" class="map-button" aria-label="放大">
+                    <i class="fa fa-plus"></i>
+                </button>
+                <div class="w-full h-px bg-gray-200"></div>
+                <button id="zoomOut" class="map-button" aria-label="缩小">
+                    <i class="fa fa-minus"></i>
+                </button>
+                <div class="w-full h-px bg-gray-200"></div>
+                <button id="resetMap" class="map-button" aria-label="重置地图">
+                    <i class="fa fa-refresh"></i>
+                </button>
+                <div class="w-full h-px bg-gray-200"></div>
+                <button id="locateMe" class="map-button" aria-label="定位到我的位置">
+                    <i class="fa fa-map-marker"></i>
+                </button>
+            </div>
+            
+            <!-- 缩放级别指示器 -->
+            <div id="scaleIndicator" class="scale-indicator">
+                缩放级别: <span id="zoomLevel">100%</span>
+            </div>
+            
+            <!-- 位置标记 -->
+            <div id="locationMarker" class="location-marker">
+                <i class="fa fa-map-marker text-red-500 text-2xl animate-pulse"></i>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // 获取DOM元素
+            const mapContainer = document.getElementById('mapContainer');
+            const map = document.getElementById('map');
+            const zoomInBtn = document.getElementById('zoomIn');
+            const zoomOutBtn = document.getElementById('zoomOut');
+            const resetBtn = document.getElementById('resetMap');
+            const locateMeBtn = document.getElementById('locateMe');
+            const zoomLevelDisplay = document.getElementById('zoomLevel');
+            const searchInput = document.getElementById('searchInput');
+            const searchResults = document.getElementById('searchResults');
+            const locationMarker = document.getElementById('locationMarker');
+            
+            // 地图状态变量
+            let scale = 1;
+            let x = 0;
+            let y = 0;
+            let isDragging = false;
+            let startX, startY;
+            let initialX, initialY;
+            
+            // 缩放配置
+            const minScale = 0.5;
+            const maxScale = 3;
+            const scaleStep = 0.2;
+            
+            // 模拟地点数据 - 实际应用中通常从API获取
+            const locations = [
+                { id: 1, name: "北京", x: 750, y: 450 },
+                { id: 2, name: "上海", x: 820, y: 520 },
+                { id: 3, name: "广州", x: 780, y: 620 },
+                { id: 4, name: "深圳", x: 790, y: 640 },
+                { id: 5, name: "成都", x: 580, y: 550 },
+                { id: 6, name: "杭州", x: 790, y: 500 },
+                { id: 7, name: "南京", x: 750, y: 490 },
+                { id: 8, name: "重庆", x: 620, y: 580 },
+                { id: 9, name: "武汉", x: 700, y: 530 },
+                { id: 10, name: "西安", x: 550, y: 480 },
+                { id: 11, name: "纽约", x: 250, y: 350 },
+                { id: 12, name: "伦敦", x: 480, y: 320 },
+                { id: 13, name: "东京", x: 950, y: 380 },
+                { id: 14, name: "巴黎", x: 490, y: 330 },
+                { id: 15, name: "悉尼", x: 1100, y: 750 }
+            ];
+            
+            // 更新地图变换
+            function updateMapTransform() {
+                map.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+                zoomLevelDisplay.textContent = `${Math.round(scale * 100)}%`;
+                
+                // 更新按钮状态
+                zoomInBtn.disabled = scale >= maxScale;
+                zoomOutBtn.disabled = scale <= minScale;
+                
+                if (scale >= maxScale) {
+                    zoomInBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                    zoomInBtn.classList.remove('hover:bg-primary', 'hover:text-white');
+                } else {
+                    zoomInBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                    zoomInBtn.classList.add('hover:bg-primary', 'hover:text-white');
+                }
+                
+                if (scale <= minScale) {
+                    zoomOutBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                    zoomOutBtn.classList.remove('hover:bg-primary', 'hover:text-white');
+                } else {
+                    zoomOutBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                    zoomOutBtn.classList.add('hover:bg-primary', 'hover:text-white');
+                }
+            }
+            
+            // 放大功能
+            function zoomIn(clientX, clientY) {
+                if (scale < maxScale) {
+                    const rect = mapContainer.getBoundingClientRect();
+                    const centerX = rect.width / 2;
+                    const centerY = rect.height / 2;
+                    
+                    const mouseX = clientX !== undefined ? clientX - rect.left : centerX;
+                    const mouseY = clientY !== undefined ? clientY - rect.top : centerY;
+                    
+                    const deltaX = mouseX - x;
+                    const deltaY = mouseY - y;
+                    
+                    scale += scaleStep;
+                    
+                    x = mouseX - deltaX * (scale / (scale - scaleStep));
+                    y = mouseY - deltaY * (scale / (scale - scaleStep));
+                    
+                    updateMapTransform();
+                }
+            }
+            
+            // 缩小功能
+            function zoomOut(clientX, clientY) {
+                if (scale > minScale) {
+                    const rect = mapContainer.getBoundingClientRect();
+                    const centerX = rect.width / 2;
+                    const centerY = rect.height / 2;
+                    
+                    const mouseX = clientX !== undefined ? clientX - rect.left : centerX;
+                    const mouseY = clientY !== undefined ? clientY - rect.top : centerY;
+                    
+                    const deltaX = mouseX - x;
+                    const deltaY = mouseY - y;
+                    
+                    scale -= scaleStep;
+                    
+                    x = mouseX - deltaX * (scale / (scale + scaleStep));
+                    y = mouseY - deltaY * (scale / (scale + scaleStep));
+                    
+                    updateMapTransform();
+                }
+            }
+            
+            // 重置地图
+            function resetMap() {
+                scale = 1;
+                x = 0;
+                y = 0;
+                locationMarker.classList.remove('visible');
+                updateMapTransform();
+            }
+            
+            // 定位到指定位置
+            function locatePosition(targetX, targetY, zoomLevel = 2) {
+                // 获取地图容器尺寸
+                const rect = mapContainer.getBoundingClientRect();
+                const containerWidth = rect.width;
+                const containerHeight = rect.height;
+                
+                // 计算需要的平移值，使目标位置居中
+                x = containerWidth / 2 - targetX * zoomLevel;
+                y = containerHeight / 2 - targetY * zoomLevel;
+                scale = zoomLevel;
+                
+                // 设置标记位置
+                locationMarker.style.left = `${targetX}px`;
+                locationMarker.style.top = `${targetY}px`;
+                locationMarker.classList.add('visible');
+                
+                // 应用变换
+                updateMapTransform();
+                
+                // 闪烁动画效果
+                locationMarker.classList.remove('animate-pulse');
+                setTimeout(() => {
+                    locationMarker.classList.add('animate-pulse');
+                }, 10);
+            }
+            
+            // 搜索功能
+            function searchLocations(query) {
+                if (!query.trim()) {
+                    searchResults.classList.add('hidden');
+                    return;
+                }
+                
+                // 过滤匹配的地点
+                const filtered = locations.filter(location => 
+                    location.name.toLowerCase().includes(query.toLowerCase())
+                );
+                
+                // 显示搜索结果
+                displaySearchResults(filtered);
+            }
+            
+            // 显示搜索结果
+            function displaySearchResults(results) {
+                searchResults.innerHTML = '';
+                
+                if (results.length === 0) {
+                    const noResult = document.createElement('div');
+                    noResult.className = 'search-result-item text-gray-500';
+                    noResult.textContent = '没有找到匹配的地点';
+                    searchResults.appendChild(noResult);
+                } else {
+                    results.forEach(location => {
+                        const item = document.createElement('div');
+                        item.className = 'search-result-item';
+                        item.textContent = location.name;
+                        item.addEventListener('click', () => {
+                            // 点击结果时定位到该地点
+                            locatePosition(location.x, location.y);
+                            // 清空搜索框并隐藏结果
+                            searchInput.value = '';
+                            searchResults.classList.add('hidden');
+                        });
+                        searchResults.appendChild(item);
+                    });
+                }
+                
+                searchResults.classList.remove('hidden');
+            }
+            
+            // 模拟获取用户位置并定位
+            function locateUser() {
+                // 实际应用中应使用Geolocation API获取真实位置
+                // 这里使用北京作为示例位置
+                const userLocation = locations.find(loc => loc.name === "北京");
+                
+                if (userLocation) {
+                    locatePosition(userLocation.x, userLocation.y);
+                    
+                    // 显示定位成功提示
+                    const notification = document.createElement('div');
+                    notification.className = 'fixed top-4 left-1/2 transform -translate-x-1/2 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg z-50';
+                    notification.textContent = '已定位到您的位置';
+                    document.body.appendChild(notification);
+                    
+                    // 3秒后移除提示
+                    setTimeout(() => {
+                        notification.classList.add('opacity-0', 'transition-opacity', 'duration-500');
+                        setTimeout(() => notification.remove(), 500);
+                    }, 3000);
+                }
+            }
+            
+            // 鼠标按下事件 - 开始拖拽
+            mapContainer.addEventListener('mousedown', (e) => {
+                if (e.button !== 0) return;
+                
+                isDragging = true;
+                mapContainer.classList.add('dragging');
+                
+                startX = e.clientX;
+                startY = e.clientY;
+                initialX = x;
+                initialY = y;
+                
+                mapContainer.style.cursor = 'grabbing';
+            });
+            
+            // 鼠标移动事件 - 处理拖拽
+            document.addEventListener('mousemove', (e) => {
+                if (!isDragging) return;
+                
+                const deltaX = e.clientX - startX;
+                const deltaY = e.clientY - startY;
+                
+                x = initialX + deltaX;
+                y = initialY + deltaY;
+                
+                updateMapTransform();
+            });
+            
+            // 鼠标释放事件 - 结束拖拽
+            document.addEventListener('mouseup', () => {
+                if (isDragging) {
+                    isDragging = false;
+                    mapContainer.classList.remove('dragging');
+                    mapContainer.style.cursor = 'grab';
+                }
+            });
+            
+            // 鼠标离开容器事件 - 结束拖拽
+            mapContainer.addEventListener('mouseleave', () => {
+                if (isDragging) {
+                    isDragging = false;
+                    mapContainer.classList.remove('dragging');
+                    mapContainer.style.cursor = 'grab';
+                }
+            });
+            
+            // 搜索输入事件
+            searchInput.addEventListener('input', (e) => {
+                searchLocations(e.target.value);
+            });
+            
+            // 点击页面其他地方隐藏搜索结果
+            document.addEventListener('click', (e) => {
+                if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) {
+                    searchResults.classList.add('hidden');
+                }
+            });
+            
+            // 按钮控制事件
+            zoomInBtn.addEventListener('click', () => zoomIn());
+            zoomOutBtn.addEventListener('click', () => zoomOut());
+            resetBtn.addEventListener('click', resetMap);
+            locateMeBtn.addEventListener('click', locateUser);
+            
+            // 鼠标滚轮缩放
+            mapContainer.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                if (e.deltaY < 0) {
+                    zoomIn(e.clientX, e.clientY);
+                } else {
+                    zoomOut(e.clientX, e.clientY);
+                }
+            }, { passive: false });
+            
+            // 双击放大
+            mapContainer.addEventListener('dblclick', (e) => {
+                e.preventDefault();
+                zoomIn(e.clientX, e.clientY);
+            });
+            
+            // 初始化地图
+            mapContainer.style.cursor = 'grab';
+            updateMapTransform();
+        });
+    </script>
+</body>
+</html>
+    
